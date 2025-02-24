@@ -1,47 +1,30 @@
 class MemoryLeakJob < ApplicationJob
   queue_as :default
 
-  # The purpose of this job to take each blog record and send it to an api and save that api response. 
-
-  def perform
-    blogs = Blog.all
+  def perform(batch_size = 1000)
+    # Array for storing valid blog ids
+    valid_blogs_ids = []
     
-    blogs.each do |blog|
-      validate_and_process(blog)
+    # instead of Blog.all, we use Blog.find_in_batches to load records in batches to avoid memory overflow
+    Blog.find_in_batches(batch_size: 1000) do |batch|
+      batch.each do |blog|
+        if blog_valid?(blog)
+          valid_blogs_ids << blog.id           
+        else  
+          Rails.logger.info "Invalid blog: #{blog.id}"
+        end
+      end
+      # Enqueue the job with valid blog ids if the array reaches the batch size this job will fetch responses for each blog and save it
+      BlogsApiResponseJob.perform_later(valid_blogs_ids)
+      valid_blogs_ids.clear
     end
+
   end
 
   private
-
-  def validate_and_process(blog)
-    # Perform some validations
-    if blog_valid?(blog)
-      # Make an API request
-      blog_to_api(blog)
-    else
-      Rails.logger.info "Invalid blog: #{blog.id}"
-    end
-
-    # Memory leak: storing blog in an array, which grows indefinitely
-    @processed_blogs ||= []
-    @processed_blogs << blog
-
-    # This prevents the blog object from being garbage collected
-  end
 
   def blog_valid?(blog)
     blog.title.present? && blog.body.present?
   end
 
-  def blog_to_api(blog)
-    # Mock API call - can be replaced with real HTTP call
-    sleep(0.1) # Simulate some network latency
-    temp_id = 'blog-id'
-    # Save API Response
-    api_response_id = temp_id.gsub("id","#{SecureRandom.hex}-#{blog.id}")
-    blog.api_responses.create!(
-      api_response_id: api_response_id, 
-      api_status: ApiResponse.api_statuses.keys.sample
-    )
-  end
 end
